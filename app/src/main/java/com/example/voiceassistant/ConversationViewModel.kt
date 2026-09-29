@@ -40,14 +40,29 @@ enum class AssistantState {
 }
 
 // =========================================================
-// UI STATE
+// CHAT MODELS & UI STATE
 // =========================================================
+
+enum class ChatSender {
+    DRIVER,
+    KALKI
+}
+
+data class ChatMessage(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val sender: ChatSender,
+    val text: String,
+    val timestamp: Long = System.currentTimeMillis()
+)
 
 data class ConversationUiState(
     val state: AssistantState = AssistantState.SLEEPING,
+    val messages: List<ChatMessage> = emptyList(),
     val lastTranscript: String = "",
     val lastReply: String = "",
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val isTextInputVisible: Boolean = false,
+    val audioAmplitude: Float = 0f
 )
 
 // =========================================================
@@ -193,6 +208,23 @@ class ConversationViewModel(
     // QUICK QUERY (Suggestion chips)
     // =====================================================
 
+    fun toggleTextInput(visible: Boolean) {
+        _uiState.value = _uiState.value.copy(isTextInputVisible = visible)
+    }
+
+    fun sendTextMessage(text: String) {
+        toggleTextInput(false)
+        sendQuickQuery(text)
+    }
+
+    fun clearConversationHistory() {
+        _uiState.value = _uiState.value.copy(
+            messages = emptyList(),
+            lastTranscript = "",
+            lastReply = ""
+        )
+    }
+
     fun sendQuickQuery(query: String) {
         val trimmed = query.trim()
         if (trimmed.isBlank()) return
@@ -207,10 +239,13 @@ class ConversationViewModel(
 
         // Transition: -> THINKING
         KalkiBridge.logStateTransition(_uiState.value.state.name, AssistantState.THINKING.name)
+        val driverMessage = ChatMessage(sender = ChatSender.DRIVER, text = trimmed)
         _uiState.value = _uiState.value.copy(
             state = AssistantState.THINKING,
+            messages = _uiState.value.messages + driverMessage,
             lastTranscript = trimmed,
-            errorMessage = null
+            errorMessage = null,
+            audioAmplitude = 0f
         )
 
         viewModelScope.launch {
@@ -227,11 +262,13 @@ class ConversationViewModel(
                 Log.d(TAG, "Quick query reply: \"${result.reply}\"")
 
                 val replyText = if (result.reply.isNotBlank()) result.reply else "I am KALKI, your autonomous vehicle assistant."
+                val kalkiMessage = ChatMessage(sender = ChatSender.KALKI, text = replyText)
 
                 // Transition: THINKING -> SPEAKING
                 KalkiBridge.logStateTransition(AssistantState.THINKING.name, AssistantState.SPEAKING.name)
                 _uiState.value = _uiState.value.copy(
                     state = AssistantState.SPEAKING,
+                    messages = _uiState.value.messages + kalkiMessage,
                     lastTranscript = trimmed,
                     lastReply = replyText,
                     errorMessage = null
@@ -393,6 +430,9 @@ class ConversationViewModel(
                     0
                 }
 
+                val normalized = (maxAmplitude.toFloat() / 18000f).coerceIn(0f, 1f)
+                _uiState.value = _uiState.value.copy(audioAmplitude = normalized)
+
                 if (maxAmplitude > AMPLITUDE_THRESHOLD) {
                     speechDurationMs += pollIntervalMs
                     if (speechDurationMs >= MIN_SPEECH_DURATION_MS && !hasSpoken) {
@@ -491,13 +531,18 @@ class ConversationViewModel(
                     val clarifyText = "I couldn't hear you clearly. Could you please repeat that?"
                     Log.w(TAG, "STT returned unclear/noise audio ($cleanTranscript) -> speaking clarification aloud")
 
+                    val driverMsg = ChatMessage(sender = ChatSender.DRIVER, text = "(Unclear audio)")
+                    val kalkiMsg = ChatMessage(sender = ChatSender.KALKI, text = clarifyText)
+
                     // Transition: THINKING -> SPEAKING with clarification
                     KalkiBridge.logStateTransition(AssistantState.THINKING.name, AssistantState.SPEAKING.name)
                     _uiState.value = _uiState.value.copy(
                         state = AssistantState.SPEAKING,
+                        messages = _uiState.value.messages + driverMsg + kalkiMsg,
                         lastTranscript = "(Unclear audio)",
                         lastReply = clarifyText,
-                        errorMessage = null
+                        errorMessage = null,
+                        audioAmplitude = 0f
                     )
 
                     // Speak clarification: Fish Audio MP3 if available, otherwise Platform TTS
@@ -513,14 +558,18 @@ class ConversationViewModel(
 
                 // Normal successful transcript
                 val replyText = if (result.reply.isNotBlank()) result.reply else "I am here. How can I assist you?"
+                val driverMsg = ChatMessage(sender = ChatSender.DRIVER, text = result.transcript)
+                val kalkiMsg = ChatMessage(sender = ChatSender.KALKI, text = replyText)
 
                 // Transition: THINKING -> SPEAKING
                 KalkiBridge.logStateTransition(AssistantState.THINKING.name, AssistantState.SPEAKING.name)
                 _uiState.value = _uiState.value.copy(
                     state = AssistantState.SPEAKING,
+                    messages = _uiState.value.messages + driverMsg + kalkiMsg,
                     lastTranscript = result.transcript,
                     lastReply = replyText,
-                    errorMessage = null
+                    errorMessage = null,
+                    audioAmplitude = 0f
                 )
 
                 // Speak response: Fish Audio MP3 first, Platform TTS fallback
