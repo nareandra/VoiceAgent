@@ -118,31 +118,39 @@ fun TapToTalkScreen(
             // 1. Top Minimalist Status Bar
             TeslaTopHeader()
 
-            // 2. Multi-Turn Conversation Stream (Scrollable chat history)
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                TeslaConversationStream(
-                    messages = uiState.messages,
-                    state = uiState.state
-                )
+            // 2. Multi-Turn Conversation Stream or Balanced Top Spacer
+            if (uiState.messages.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    TeslaConversationStream(
+                        messages = uiState.messages,
+                        state = uiState.state
+                    )
+                }
+            } else {
+                Spacer(modifier = Modifier.weight(1f))
             }
 
-            // 3. Center Glowing AI Voice Pearl & Acoustic Soundwave
+            // 3. Center Glowing AI Voice Pearl & Acoustic Soundwave (Pure Animation)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(180.dp),
+                    .height(if (uiState.messages.isEmpty()) 240.dp else 180.dp),
                 contentAlignment = Alignment.Center
             ) {
                 TeslaVoicePearl(
                     state = uiState.state,
                     audioAmplitude = uiState.audioAmplitude
                 )
+            }
+
+            if (uiState.messages.isEmpty()) {
+                Spacer(modifier = Modifier.weight(1f))
             }
 
             // 4. Bottom Controls: Quick Chips + Pill Mic Button + State Label
@@ -235,33 +243,8 @@ private fun TeslaConversationStream(
     }
 
     if (messages.isEmpty()) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.padding(horizontal = 24.dp)
-        ) {
-            Text(
-                text = when (state) {
-                    AssistantState.SLEEPING -> "Say \"Hey Kalki\""
-                    AssistantState.WAKE_DETECTED,
-                    AssistantState.LISTENING -> "I'm listening…"
-                    AssistantState.THINKING -> "Processing…"
-                    AssistantState.SPEAKING -> "KALKI speaking…"
-                    AssistantState.ERROR -> "Connection notice"
-                },
-                color = if (state == AssistantState.LISTENING) TeslaCyanGlow else TeslaTextSecondary,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.5.sp
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = "Autonomous navigation, traffic & vehicle assistant",
-                color = TeslaTextMuted,
-                fontSize = 12.sp,
-                textAlign = TextAlign.Center
-            )
-        }
+        // Keep screen completely clean — no placeholder text, only the voice animation
+        Box(modifier = Modifier.fillMaxSize())
     } else {
         LazyColumn(
             state = listState,
