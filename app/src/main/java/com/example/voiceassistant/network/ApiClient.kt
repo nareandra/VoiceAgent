@@ -63,7 +63,8 @@ class ApiClient(
 
     suspend fun converse(
         audioFile: File,
-        sessionId: String? = null
+        sessionId: String? = null,
+        fastTts: Boolean = true
     ): ConverseResult = withContext(Dispatchers.IO) {
 
         val audioRequestBody = audioFile
@@ -89,11 +90,16 @@ class ApiClient(
         var lastException: Exception? = null
 
         for (url in targets) {
-            val request = Request.Builder()
+            val requestBuilder = Request.Builder()
                 .url(url)
                 .post(requestBody)
                 .addHeader("X-API-Key", apiKey)
-                .build()
+
+            if (fastTts) {
+                requestBuilder.addHeader("X-TTS-Mode", "native")
+            }
+
+            val request = requestBuilder.build()
 
             try {
                 client.newCall(request).execute().use { response ->
@@ -137,7 +143,8 @@ class ApiClient(
 
     suspend fun converseText(
         text: String,
-        sessionId: String? = null
+        sessionId: String? = null,
+        fastTts: Boolean = true
     ): TextConverseResult = withContext(Dispatchers.IO) {
 
         val jsonBody = JSONObject().apply {
@@ -156,12 +163,17 @@ class ApiClient(
 
         val url = "${baseUrl.trimEnd('/')}/v1/converse-text"
 
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(url)
             .post(requestBody)
             .addHeader("Content-Type", "application/json")
             .addHeader("X-API-Key", apiKey)
-            .build()
+
+        if (fastTts) {
+            requestBuilder.addHeader("X-TTS-Mode", "native")
+        }
+
+        val request = requestBuilder.build()
 
         client.newCall(request).execute().use { response ->
 

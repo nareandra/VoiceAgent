@@ -64,7 +64,7 @@ class ConversationViewModel(
         private const val TAG_STATE = "KALKI_STATE"
         private const val TAG_TTS = "KALKI_TTS"
         private const val INACTIVITY_TIMEOUT_MS = 10_000L
-        private const val SPEECH_SILENCE_THRESHOLD_MS = 1_200L
+        private const val SPEECH_SILENCE_THRESHOLD_MS = 750L
         private const val MIN_SPEECH_DURATION_MS = 300L
         private const val AMPLITUDE_THRESHOLD = 3800
     }
@@ -346,8 +346,9 @@ class ConversationViewModel(
                 setAudioSource(MediaRecorder.AudioSource.MIC)
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                 setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setAudioEncodingBitRate(128000)
-                setAudioSamplingRate(44100)
+                setAudioEncodingBitRate(32000)
+                setAudioSamplingRate(16000)
+                setAudioChannels(1)
                 setOutputFile(outputFile.absolutePath)
                 prepare()
                 start()
