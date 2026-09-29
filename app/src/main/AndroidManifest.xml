@@ -18,8 +18,9 @@
 
     <!-- Wake lock to prevent deep sleep while listening -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
 
-    <!-- Allows KALKI to open and display on screen when wake word is detected in background -->
+    <!-- Allows KALKI to open and display on screen when wake word is detected in background or lock screen -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
@@ -41,11 +42,15 @@
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.VoiceAgent">
 
-        <!-- Main UI -->
+        <!-- Main UI (Displays over lock screen when wake word is detected) -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="KALKI"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:showOnLockScreen="true"
+            android:inheritShowWhenLocked="true"
             android:theme="@style/Theme.VoiceAgent"
             android:windowSoftInputMode="adjustResize">
 

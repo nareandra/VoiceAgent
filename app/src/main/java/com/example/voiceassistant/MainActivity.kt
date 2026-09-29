@@ -1,6 +1,6 @@
 package com.example.voiceassistant
 
-import android.Manifest
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -105,12 +106,36 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Configure lock-screen display flags so KALKI displays over keyguard when screen is locked
+        configureLockScreenDisplay()
+
         // MICROPHONE PERMISSION CHECK
         checkMicrophonePermission()
 
         if (intent?.action == KalkiForegroundService.ACTION_WAKE_WORD_DETECTED) {
             conversationViewModel.onWakeWordDetected()
         }
+    }
+
+    // =========================================================
+    // LOCK SCREEN DISPLAY CONFIGURATION
+    // =========================================================
+
+    private fun configureLockScreenDisplay() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+            val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+            keyguardManager?.requestDismissKeyguard(this, null)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+            )
+        }
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
     // =========================================================
@@ -190,6 +215,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         Log.d(TAG, "MainActivity resumed")
+        configureLockScreenDisplay()
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             == PackageManager.PERMISSION_GRANTED
@@ -229,6 +255,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        configureLockScreenDisplay()
         if (intent.action == KalkiForegroundService.ACTION_WAKE_WORD_DETECTED) {
             Log.d(TAG, "onNewIntent: Wake word detected from background")
             conversationViewModel.onWakeWordDetected()

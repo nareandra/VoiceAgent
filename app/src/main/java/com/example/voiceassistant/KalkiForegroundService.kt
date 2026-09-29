@@ -6,11 +6,13 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -21,6 +23,9 @@ class KalkiForegroundService : Service() {
         private const val TAG = "KALKI_FGS"
         private const val CHANNEL_ID = "kalki_voice_service"
         private const val NOTIFICATION_ID = 1001
+
+        private const val WAKE_ALERT_CHANNEL_ID = "kalki_wake_alerts"
+        private const val WAKE_NOTIFICATION_ID = 1002
 
         // Service actions
         const val ACTION_START = "com.example.voiceassistant.START_KALKI"
@@ -33,6 +38,7 @@ class KalkiForegroundService : Service() {
     }
 
     private var wakeWordService: WakeWordService? = null
+    private var cpuWakeLock: PowerManager.WakeLock? = null
 
     // =========================================================
     // SERVICE CREATED
@@ -133,6 +139,23 @@ class KalkiForegroundService : Service() {
 
             Log.d(TAG, "KALKI FOREGROUND SERVICE ACTIVE with MICROPHONE permission")
 
+            // Acquire CPU PARTIAL_WAKE_LOCK to keep speech recognition active when phone is locked/screen off
+            try {
+                if (cpuWakeLock == null) {
+                    val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+                    cpuWakeLock = powerManager?.newWakeLock(
+                        PowerManager.PARTIAL_WAKE_LOCK,
+                        "KALKI:CpuWakeLock"
+                    )?.apply {
+                        setReferenceCounted(false)
+                        acquire()
+                    }
+                    Log.d(TAG, "CPU partial wake lock acquired for background lock-screen listening")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to acquire CPU partial wake lock", e)
+            }
+
             // Start wake-word listener
             wakeWordService?.start()
 
@@ -147,16 +170,36 @@ class KalkiForegroundService : Service() {
     // =========================================================
 
     private fun onWakeWordDetected() {
-        Log.d(TAG, "WAKE EVENT: Broadcasting to app components and launching UI")
+        Log.d(TAG, "WAKE EVENT: Broadcasting to app components, waking screen, and launching UI")
+
+        // 1. Physically turn on/wake the screen if it was off or locked
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val screenWakeLock = powerManager?.newWakeLock(
+                @Suppress("DEPRECATION")
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                PowerManager.ON_AFTER_RELEASE,
+                "KALKI:ScreenWakeLock"
+            )
+            screenWakeLock?.acquire(3000L)
+            Log.d(TAG, "Screen wake lock acquired: screen illuminated")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error acquiring screen wake lock: ${e.message}")
+        }
 
         val intent = Intent(ACTION_WAKE_WORD_DETECTED).apply {
             setPackage(packageName)
         }
         sendBroadcast(intent)
 
-        // 1. Direct Activity launch
+        // 2. Direct Activity launch intent
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            )
             action = ACTION_WAKE_WORD_DETECTED
         }
 
@@ -166,11 +209,11 @@ class KalkiForegroundService : Service() {
             Log.e(TAG, "Could not launch activity directly: ${e.message}")
         }
 
-        // 2. Full-Screen Heads-Up Notification (handles Android 10+ background start restrictions)
+        // 3. Full-Screen Heads-Up Notification (wakes phone and pops over Keyguard/Lock Screen)
         try {
             val pendingIntent = PendingIntent.getActivity(
                 this,
-                1002,
+                WAKE_NOTIFICATION_ID,
                 openAppIntent,
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
@@ -179,18 +222,19 @@ class KalkiForegroundService : Service() {
                 }
             )
 
-            val wakeNotification = NotificationCompat.Builder(this, CHANNEL_ID)
+            val wakeNotification = NotificationCompat.Builder(this, WAKE_ALERT_CHANNEL_ID)
                 .setContentTitle("KALKI is listening…")
                 .setContentText("Wake word detected! Go ahead and speak.")
                 .setSmallIcon(android.R.drawable.ic_btn_speak_now)
                 .setPriority(NotificationCompat.PRIORITY_MAX)
-                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setFullScreenIntent(pendingIntent, true)
                 .setAutoCancel(true)
                 .build()
 
             val notificationManager = getSystemService(NotificationManager::class.java)
-            notificationManager?.notify(NOTIFICATION_ID, wakeNotification)
+            notificationManager?.notify(WAKE_NOTIFICATION_ID, wakeNotification)
         } catch (e: Exception) {
             Log.d(TAG, "Notification trigger error: ${e.message}")
         }
@@ -224,6 +268,15 @@ class KalkiForegroundService : Service() {
         KalkiBridge.resumeWakeListenerAction = null
 
         try {
+            if (cpuWakeLock?.isHeld == true) {
+                cpuWakeLock?.release()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing cpuWakeLock", e)
+        }
+        cpuWakeLock = null
+
+        try {
             wakeWordService?.stop()
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping WakeWordService", e)
@@ -242,21 +295,34 @@ class KalkiForegroundService : Service() {
     }
 
     // =========================================================
-    // NOTIFICATION CHANNEL
+    // NOTIFICATION CHANNELS
     // =========================================================
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
+            val notificationManager = getSystemService(NotificationManager::class.java)
+
+            // 1. Ongoing background service channel (Low importance, non-intrusive)
+            val serviceChannel = NotificationChannel(
                 CHANNEL_ID,
                 "KALKI Voice Assistant",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "KALKI is active and waiting for the wake word (\"Hey Kalki\")"
             }
+            notificationManager?.createNotificationChannel(serviceChannel)
 
-            val notificationManager = getSystemService(NotificationManager::class.java)
-            notificationManager?.createNotificationChannel(channel)
+            // 2. High-priority Wake Alert channel (High importance to trigger over lock screen)
+            val wakeAlertChannel = NotificationChannel(
+                WAKE_ALERT_CHANNEL_ID,
+                "KALKI Wake Alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Wakes up device and opens KALKI when wake word is detected"
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                enableVibration(true)
+            }
+            notificationManager?.createNotificationChannel(wakeAlertChannel)
         }
     }
 
@@ -298,6 +364,15 @@ class KalkiForegroundService : Service() {
 
         KalkiBridge.pauseWakeListenerAction = null
         KalkiBridge.resumeWakeListenerAction = null
+
+        try {
+            if (cpuWakeLock?.isHeld == true) {
+                cpuWakeLock?.release()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing cpuWakeLock", e)
+        }
+        cpuWakeLock = null
 
         try {
             wakeWordService?.stop()
